@@ -29,7 +29,10 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK             = "OK"
+	ErrNum         = "ErrNum"
+	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
 )
 
 type Err string
@@ -71,3 +74,28 @@ type QueryReply struct {
 	Err         Err
 	Config      Config
 }
+
+type CommandArgs struct {
+	Servers   map[int][]string // for Join
+	GIDs      []int            // for Leave
+	Shard     int              // for Move
+	GID       int              // for Move
+	Num       int              // for Query
+	Op        OpType
+	ClientId  int64
+	CommandId int64
+}
+
+type CommandReply struct {
+	Err    Err
+	Config Config
+}
+
+type OpType int
+
+const (
+	Query_OP OpType = iota
+	Move_OP  OpType = iota
+	Leave_OP OpType = iota
+	Join_OP  OpType = iota
+)
