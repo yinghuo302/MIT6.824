@@ -1,15 +1,21 @@
 package kvraft
 
 import (
-	"6.5840/labgob"
-	"6.5840/labrpc"
-	"6.5840/raft"
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.5840/labgob"
+	"6.5840/labrpc"
+	"6.5840/raft"
 )
 
-const Debug = false
+const (
+	Debug       = false
+	ExecTimeOut = time.Millisecond * 500
+)
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -18,32 +24,109 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+type RequestHistory struct {
+	reply RequestReply
+	reqId int64
 }
 
 type KVServer struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
-
+	mu           sync.RWMutex
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	dead         int32 // set by Kill()
+	kvCache      KVCache
 	maxraftstate int // snapshot if log grows this big
-
-	// Your definitions here.
+	notifier     map[int]chan *RequestReply
+	lastReq      map[int64]RequestHistory
+	persister    *raft.Persister
 }
 
+func (kv *KVServer) restoreSnapshot(data []byte) {
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var kvCache KVMemory
+	var lastReq map[int64]RequestHistory
 
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	if d.Decode(&kvCache) != nil ||
+		d.Decode(&lastReq) != nil {
+		log.Fatal("kv read persist err!")
+	}
+	kv.lastReq = lastReq
+	kv.kvCache = &kvCache
 }
 
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+func (kv *KVServer) saveSnapshot(index int) {
+	if kv.maxraftstate == -1 || kv.persister.RaftStateSize() < kv.maxraftstate {
+		return
+	}
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if err := e.Encode(kv.kvCache); err != nil {
+		panic(err)
+	}
+	if err := e.Encode(kv.lastReq); err != nil {
+		panic(err)
+	}
+	data := w.Bytes()
+	kv.rf.Snapshot(index, data)
+}
+
+func (kv *KVServer) HandleRequest(args *RequestArgs, reply *RequestReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	index, _, isLeader := kv.rf.Start(args)
+	if !isLeader {
+		reply.Err, reply.Value = ErrWrongLeader, ""
+	}
+	ch := make(chan *RequestReply)
+	kv.notifier[index] = ch
+	select {
+	case r := <-ch:
+		reply.Err, reply.Value = r.Err, r.Value
+	case <-time.After(ExecTimeOut):
+		reply.Err, reply.Value = ErrTimeout, ""
+	}
+	delete(kv.notifier, index)
+}
+
+func (kv *KVServer) execCmd(args *RequestArgs) (reply RequestReply) {
+	if args.Op == GET_OP {
+		reply.Value, reply.Err = kv.kvCache.Get(args.Key)
+	} else if args.Op == APPEND_OP {
+		reply.Value, reply.Err = "", kv.kvCache.Append(args.Key, args.Value)
+	} else if args.Op == PUT_OP {
+		reply.Value, reply.Err = "", kv.kvCache.Put(args.Key, args.Value)
+	}
+	return
+}
+
+func (kv *KVServer) handleCommand() {
+	for !kv.killed() {
+		msg := <-kv.applyCh
+		func(msg *raft.ApplyMsg) {
+			kv.mu.Lock()
+			defer kv.mu.Unlock()
+			if msg.SnapshotValid {
+				if kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot) {
+					kv.restoreSnapshot(msg.Snapshot)
+				}
+			} else if msg.CommandValid {
+				req := msg.Command.(RequestArgs)
+				lastReq, ok := kv.lastReq[req.ClientId]
+				if req.Op != GET_OP && ok && lastReq.reqId != req.RequestId {
+					kv.notifier[msg.CommandIndex] <- &lastReq.reply
+					return
+				}
+				reply := kv.execCmd(&req)
+				kv.notifier[msg.CommandIndex] <- &reply
+				if req.Op != GET_OP {
+					kv.lastReq[req.ClientId] = RequestHistory{reqId: req.RequestId, reply: reply}
+				}
+				kv.saveSnapshot(msg.CommandIndex)
+			}
+		}(&msg)
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -80,17 +163,21 @@ func (kv *KVServer) killed() bool {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
-
-	kv := new(KVServer)
-	kv.me = me
-	kv.maxraftstate = maxraftstate
-
-	// You may need initialization code here.
-
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	labgob.Register(RequestArgs{})
+	labgob.Register(RequestReply{})
+	labgob.Register(RequestHistory{})
+	labgob.Register(KVMemory{})
+	ch := make(chan raft.ApplyMsg)
+	kv := &KVServer{
+		me:           me,
+		dead:         0,
+		maxraftstate: maxraftstate,
+		applyCh:      ch,
+		rf:           raft.Make(servers, me, persister, ch),
+		kvCache:      NewKVCache(),
+		persister:    persister,
+	}
+	go kv.handleCommand()
 	// You may need initialization code here.
 
 	return kv
