@@ -71,8 +71,10 @@ func (ck *Clerk) SendRequest(args *RequestArgs) string {
 	var reply RequestReply
 	args.ClientId, args.RequestId = ck.clientId, ck.commandId
 	for {
-		if !ck.servers[ck.leaderId].Call("KVServer.HandleRequest", args, &reply) ||
-			reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+		DPrintf("send request to %d: %+v\n", ck.leaderId, args)
+		ok := ck.servers[ck.leaderId].Call("KVServer.HandleRequest", args, &reply)
+		DPrintf("%+v receive reply from %d: %v,%+v\n", args, ck.leaderId, ok, reply)
+		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
 			continue
 		}

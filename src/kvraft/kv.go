@@ -7,7 +7,7 @@ type KVCache interface {
 }
 
 type KVMemory struct {
-	kv map[string]string
+	KV map[string]string
 }
 
 func NewKVCache() *KVMemory {
@@ -15,18 +15,18 @@ func NewKVCache() *KVMemory {
 }
 
 func (memoryKV *KVMemory) Get(key string) (string, Err) {
-	if value, ok := memoryKV.kv[key]; ok {
+	if value, ok := memoryKV.KV[key]; ok {
 		return value, OK
 	}
 	return "", ErrNoKey
 }
 
 func (memoryKV *KVMemory) Put(key, value string) Err {
-	memoryKV.kv[key] = value
+	memoryKV.KV[key] = value
 	return OK
 }
 
 func (memoryKV *KVMemory) Append(key, value string) Err {
-	memoryKV.kv[key] += value
+	memoryKV.KV[key] += value
 	return OK
 }

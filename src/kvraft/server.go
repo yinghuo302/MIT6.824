@@ -13,20 +13,12 @@ import (
 )
 
 const (
-	Debug       = false
-	ExecTimeOut = time.Millisecond * 500
+	ExecTimeOut = time.Millisecond * 800
 )
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 type RequestHistory struct {
-	reply RequestReply
-	reqId int64
+	Reply RequestReply
+	ReqId int64
 }
 
 type KVServer struct {
@@ -43,6 +35,9 @@ type KVServer struct {
 }
 
 func (kv *KVServer) restoreSnapshot(data []byte) {
+	if len(data) == 0 {
+		return
+	}
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var kvCache KVMemory
@@ -73,24 +68,45 @@ func (kv *KVServer) saveSnapshot(index int) {
 }
 
 func (kv *KVServer) HandleRequest(args *RequestArgs, reply *RequestReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	index, _, isLeader := kv.rf.Start(args)
+	kv.mu.RLock()
+	lastReq, ok := kv.lastReq[args.ClientId]
+	if args.Op != GET_OP && ok && lastReq.ReqId == args.RequestId {
+		reply.Value, reply.Err = lastReq.Reply.Value, lastReq.Reply.Err
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
+	index, _, isLeader := kv.rf.Start(*args)
 	if !isLeader {
 		reply.Err, reply.Value = ErrWrongLeader, ""
+		return
 	}
+	DPrintf("me:%d start %+v\n", kv.me, args)
 	ch := make(chan *RequestReply)
+	kv.mu.Lock()
+	DPrintf("me:%d add channel Lock\n", kv.me)
 	kv.notifier[index] = ch
+	kv.mu.Unlock()
+	DPrintf("me:%d add channel UnLock\n", kv.me)
 	select {
 	case r := <-ch:
 		reply.Err, reply.Value = r.Err, r.Value
 	case <-time.After(ExecTimeOut):
 		reply.Err, reply.Value = ErrTimeout, ""
 	}
+	kv.mu.Lock()
+	DPrintf("me:%d delete channel Lock\n", kv.me)
 	delete(kv.notifier, index)
+	kv.mu.Unlock()
+	DPrintf("me:%d delete channel UnLock\n", kv.me)
 }
 
-func (kv *KVServer) execCmd(args *RequestArgs) (reply RequestReply) {
+func (kv *KVServer) execCmd(args *RequestArgs) *RequestReply {
+	lastReq, ok := kv.lastReq[args.ClientId]
+	if args.Op != GET_OP && ok && lastReq.ReqId == args.RequestId {
+		return &lastReq.Reply
+	}
+	reply := &RequestReply{}
 	if args.Op == GET_OP {
 		reply.Value, reply.Err = kv.kvCache.Get(args.Key)
 	} else if args.Op == APPEND_OP {
@@ -98,7 +114,12 @@ func (kv *KVServer) execCmd(args *RequestArgs) (reply RequestReply) {
 	} else if args.Op == PUT_OP {
 		reply.Value, reply.Err = "", kv.kvCache.Put(args.Key, args.Value)
 	}
-	return
+	if args.Op != GET_OP {
+		kv.lastReq[args.ClientId] = RequestHistory{ReqId: args.RequestId, Reply: *reply}
+	}
+	term, isLeader := kv.rf.GetState()
+	DPrintf("me:%d state:%d,%v  apply %+v result: %+v\n", kv.me, term, isLeader, args, reply)
+	return reply
 }
 
 func (kv *KVServer) handleCommand() {
@@ -106,22 +127,20 @@ func (kv *KVServer) handleCommand() {
 		msg := <-kv.applyCh
 		func(msg *raft.ApplyMsg) {
 			kv.mu.Lock()
+			DPrintf("me:%d handleCommnad Lock\n", kv.me)
 			defer kv.mu.Unlock()
+			defer DPrintf("me:%d handleCommnad UnLock\n", kv.me)
 			if msg.SnapshotValid {
 				if kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot) {
 					kv.restoreSnapshot(msg.Snapshot)
 				}
 			} else if msg.CommandValid {
-				req := msg.Command.(RequestArgs)
-				lastReq, ok := kv.lastReq[req.ClientId]
-				if req.Op != GET_OP && ok && lastReq.reqId != req.RequestId {
-					kv.notifier[msg.CommandIndex] <- &lastReq.reply
-					return
-				}
-				reply := kv.execCmd(&req)
-				kv.notifier[msg.CommandIndex] <- &reply
-				if req.Op != GET_OP {
-					kv.lastReq[req.ClientId] = RequestHistory{reqId: req.RequestId, reply: reply}
+				args := msg.Command.(RequestArgs)
+				reply := kv.execCmd(&args)
+				currentTerm, isLeader := kv.rf.GetState()
+				ch, ok := kv.notifier[msg.CommandIndex]
+				if isLeader && msg.CommandTerm == currentTerm && ok {
+					ch <- reply
 				}
 				kv.saveSnapshot(msg.CommandIndex)
 			}
@@ -165,7 +184,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(RequestArgs{})
 	labgob.Register(RequestReply{})
-	labgob.Register(RequestHistory{})
 	labgob.Register(KVMemory{})
 	ch := make(chan raft.ApplyMsg)
 	kv := &KVServer{
@@ -176,7 +194,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 		rf:           raft.Make(servers, me, persister, ch),
 		kvCache:      NewKVCache(),
 		persister:    persister,
+		notifier:     make(map[int]chan *RequestReply),
+		lastReq:      map[int64]RequestHistory{},
 	}
+	kv.restoreSnapshot(kv.persister.ReadSnapshot())
 	go kv.handleCommand()
 	// You may need initialization code here.
 
