@@ -53,7 +53,6 @@ type ApplyMsg struct {
 
 type Entry struct {
 	Term    int
-	Index   int
 	Command interface{}
 }
 
@@ -90,7 +89,10 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 	// state for synchronize
+	replicateCond *sync.Cond
+	replicateCh   []chan struct{}
 	applyChan     chan ApplyMsg
+	applyCond     *sync.Cond
 	electionTimer *time.Timer
 	hrtBtTimer    *time.Timer
 }
@@ -117,6 +119,11 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// raftstate := w.Bytes()
 	// rf.persister.Save(raftstate, nil)
+
+	rf.persister.SaveRaftState(rf.getPersistData())
+}
+
+func (rf *Raft) getPersistData() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
@@ -124,8 +131,7 @@ func (rf *Raft) persist() {
 	e.Encode(rf.commitIndex)
 	e.Encode(rf.snapshotIndex)
 	e.Encode(rf.logs)
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	return w.Bytes()
 }
 
 // restore previously persisted state.
@@ -165,15 +171,6 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-
-}
-
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -187,13 +184,17 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
-	// Your code here (2B).
-
-	return index, term, isLeader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.state != leader {
+		return -1, -1, false
+	}
+	newLog := Entry{Command: command, Term: rf.currentTerm}
+	rf.logs = append(rf.logs, newLog)
+	index := len(rf.logs) - 1 + rf.snapshotIndex
+	DPrintf("{Node %v} receives a new command[%+v] to replicate in term %v\n", rf.me, newLog, rf.currentTerm)
+	rf.replicateCond.Signal()
+	return index, newLog.Term, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -215,6 +216,31 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) ticker() {
+	go func() {
+		for !rf.killed() {
+			select {
+			case <-rf.hrtBtTimer.C:
+				rf.doHeartBeat()
+			case <-rf.electionTimer.C:
+				rf.startElection()
+			}
+		}
+	}()
+
+	go func() {
+		rf.replicateCond.L.Lock()
+		defer rf.replicateCond.L.Unlock()
+		for !rf.killed() {
+			for rf.state != leader {
+				rf.replicateCond.Wait()
+			}
+			rf.doHeartBeat()
+		}
+	}()
+	go rf.applyCommand()
+}
+
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
@@ -233,23 +259,28 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		applyChan:     applyCh,
 		dead:          0,
 		state:         follower,
-		currentTerm:   0,
+		currentTerm:   1,
 		votedFor:      -1,
 		logs:          make([]Entry, 1),
 		nextIndex:     make([]int, len(peers)),
 		matchIndex:    make([]int, len(peers)),
 		hrtBtTimer:    time.NewTimer(heartBeatDuration()),
 		electionTimer: time.NewTimer(electionDuration()),
+		replicateCond: sync.NewCond(&sync.Mutex{}),
+		replicateCh:   make([]chan struct{}, len(peers)),
+	}
+	rf.applyCond = sync.NewCond(&rf.mu)
+	for i := 0; i < len(peers); i++ {
+		rf.replicateCh[i] = make(chan struct{})
 	}
 
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
+	DPrintf("initialization me:%d term:%d,isLeader:%t\n", rf.me, rf.currentTerm, rf.state == leader)
 	// start ticker goroutine to start elections
-	go rf.ticker()
-	go rf.applyCommand()
+	rf.ticker()
 
 	return rf
 }

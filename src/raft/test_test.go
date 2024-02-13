@@ -8,12 +8,14 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
@@ -56,21 +58,25 @@ func TestReElection2A(t *testing.T) {
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2A): election after network failure")
-
+	DPrintf("\nTest (2A)-2: election after network failure\n")
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
+	DPrintf("\nTest (2A)-2: disconnect old leader\n")
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
+
+	DPrintf("\nTest (2A)-2: reconnect old leader\n")
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
+	DPrintf("\nTest (2A)-2: disconnect old leader and one follower\n")
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
@@ -80,9 +86,10 @@ func TestReElection2A(t *testing.T) {
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
+	DPrintf("\nTest (2A)-2: reconnect one follower\n")
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
-
+	DPrintf("\nTest (2A)-2: reconnect old follower\n")
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
@@ -95,7 +102,7 @@ func TestManyElections2A(t *testing.T) {
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2A): multiple elections")
+	cfg.begin("Test (2A)-3: multiple elections")
 
 	cfg.checkOneLeader()
 
@@ -108,7 +115,7 @@ func TestManyElections2A(t *testing.T) {
 		cfg.disconnect(i1)
 		cfg.disconnect(i2)
 		cfg.disconnect(i3)
-
+		DPrintf("\nTest (2A) iter:%d disconnect %d,%d,%d\n", iters, i1, i2, i3)
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
 		cfg.checkOneLeader()
@@ -132,6 +139,7 @@ func TestBasicAgree2B(t *testing.T) {
 
 	iters := 3
 	for index := 1; index < iters+1; index++ {
+		DPrintf("\nTest (2B)-1: start command index: %d\n", index)
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
@@ -188,11 +196,11 @@ func TestFollowerFailure2B(t *testing.T) {
 	cfg.begin("Test (2B): test progressive failure of followers")
 
 	cfg.one(101, servers, false)
-
+	DPrintf("Begin Test (2B)-2\n")
 	// disconnect one follower from the network.
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect((leader1 + 1) % servers)
-
+	DPrintf("Test (2B)-2 disconnect leader + 1\n")
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
 	cfg.one(102, servers-1, false)
@@ -203,7 +211,7 @@ func TestFollowerFailure2B(t *testing.T) {
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect((leader2 + 1) % servers)
 	cfg.disconnect((leader2 + 2) % servers)
-
+	DPrintf("Test (2B)-2 disconnect leader + 1 and leader + 2\n")
 	// submit a command.
 	index, _, ok := cfg.rafts[leader2].Start(104)
 	if ok != true {
