@@ -14,6 +14,17 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
+	ErrNotReady    = "ErrNotReady"
+	ErrOutDated    = "ErrOutDated"
+)
+
+type OpType int
+
+const (
+	GET_OP    OpType = iota
+	PUT_OP    OpType = iota
+	APPEND_OP OpType = iota
 )
 
 type Err string
@@ -41,4 +52,53 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type CommonArgs struct {
+	// You'll have to add definitions here.
+	Key       string
+	Value     string
+	Op        OpType
+	ClientId  int64
+	RequestId int64
+}
+
+type CommonReply struct {
+	Err   Err
+	Value string
+}
+
+type PullShardArgs struct {
+	ConfigNum int
+	ShardIds  []int
+}
+
+type PullShardReply struct {
+	Err       Err
+	ConfigNum int
+	Shards    map[int]*Shard
+}
+
+type DelShardsArgs struct {
+	ConfNum  int
+	ShardIDs []int
+}
+
+type DelShardsReply struct {
+	Err Err
+}
+
+type CommandType int
+
+const (
+	Operation CommandType = iota
+	Configuration
+	InsertShards
+	DeleteShards
+	EmptyEntry
+)
+
+type Command struct {
+	Op  CommandType
+	Cmd interface{}
 }

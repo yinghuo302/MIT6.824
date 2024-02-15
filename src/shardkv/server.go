@@ -1,50 +1,61 @@
 package shardkv
 
+import (
+	"sync"
+	"sync/atomic"
+	"time"
 
-import "6.5840/labrpc"
-import "6.5840/raft"
-import "sync"
-import "6.5840/labgob"
+	"6.5840/labgob"
+	"6.5840/labrpc"
+	"6.5840/raft"
+	"6.5840/shardctrler"
+)
 
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
+const (
+	ExecTimeOut         = time.Millisecond * 500
+	ConfigTimeOut       = time.Millisecond * 100
+	PullShardsTimeOut   = time.Millisecond * 100
+	DeleteShardsTimeOut = time.Millisecond * 100
+	EmptyEntryTimeout   = time.Millisecond * 100
+)
 
 type ShardKV struct {
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	me           int
 	rf           *raft.Raft
 	applyCh      chan raft.ApplyMsg
 	make_end     func(string) *labrpc.ClientEnd
 	gid          int
+	persister    *raft.Persister
 	ctrlers      []*labrpc.ClientEnd
-	maxraftstate int // snapshot if log grows this big
+	maxraftstate int   // snapshot if log grows this big
+	dead         int32 // set by Kill()
 
-	// Your definitions here.
+	config    shardctrler.Config
+	oldConfig shardctrler.Config
+	sc        *shardctrler.Clerk
+	shards    map[int]*Shard
+	notifier  map[int]chan *CommonReply
 }
 
-
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-}
-
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-}
-
-// the tester calls Kill() when a ShardKV instance won't
-// be needed again. you are not required to do anything
-// in Kill(), but it might be convenient to (for example)
-// turn off debug output from this instance.
+// the tester calls Kill() when a KVServer instance won't
+// be needed again. for your convenience, we supply
+// code to set rf.dead (without needing a lock),
+// and a killed() method to test rf.dead in
+// long-running loops. you can also add your own
+// code to Kill(). you're not required to do anything
+// about this, but it may be convenient (for example)
+// to suppress debug output from a Kill()ed instance.
 func (kv *ShardKV) Kill() {
+	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
 }
 
+func (kv *ShardKV) killed() bool {
+	z := atomic.LoadInt32(&kv.dead)
+	return z == 1
+}
 
 // servers[] contains the ports of the servers in this group.
 //
@@ -75,23 +86,44 @@ func (kv *ShardKV) Kill() {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
-
-	kv := new(ShardKV)
-	kv.me = me
-	kv.maxraftstate = maxraftstate
-	kv.make_end = make_end
-	kv.gid = gid
-	kv.ctrlers = ctrlers
+	labgob.Register(CommonArgs{})
+	labgob.Register(CommonReply{})
+	labgob.Register(DelShardsArgs{})
+	labgob.Register(PullShardArgs{})
+	labgob.Register(PullShardReply{})
+	applyCh := make(chan raft.ApplyMsg)
+	kv := &ShardKV{
+		me:           me,
+		rf:           raft.Make(servers, me, persister, applyCh),
+		applyCh:      applyCh,
+		make_end:     make_end,
+		gid:          gid,
+		persister:    persister,
+		ctrlers:      ctrlers,
+		maxraftstate: maxraftstate,
+		dead:         0,
+		sc:           shardctrler.MakeClerk(servers),
+		shards:       make(map[int]*Shard),
+		notifier:     make(map[int]chan *CommonReply),
+	}
 
 	// Your initialization code here.
 
 	// Use something like this to talk to the shardctrler:
 	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
-
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
-
+	go kv.applyCommand()
+	kv.Monitor(kv.fetchConfig, ConfigTimeOut)
+	kv.Monitor(kv.pullShards, PullShardsTimeOut)
+	kv.Monitor(kv.deleteShards, DeleteShardsTimeOut)
+	// kv.Monitor(kv.)
 	return kv
+}
+
+func (kv *ShardKV) Monitor(action func(), timeout time.Duration) {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			action()
+		}
+		time.Sleep(timeout)
+	}
 }

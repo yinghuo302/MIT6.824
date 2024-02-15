@@ -782,18 +782,20 @@ func TestPersist32C(t *testing.T) {
 	cfg.one(101, 3, true)
 
 	leader := cfg.checkOneLeader()
+	DPrintf("leader is %d, disconnect %d\n", leader, (leader+2)%servers)
 	cfg.disconnect((leader + 2) % servers)
 
 	cfg.one(102, 2, true)
-
+	DPrintf("crash %d,%d, reconnect %d\n", (leader+0)%servers, (leader+1)%servers, (leader+2)%servers)
 	cfg.crash1((leader + 0) % servers)
 	cfg.crash1((leader + 1) % servers)
 	cfg.connect((leader + 2) % servers)
+	DPrintf("restart %d\n", (leader+0)%servers)
 	cfg.start1((leader+0)%servers, cfg.applier)
 	cfg.connect((leader + 0) % servers)
 
 	cfg.one(103, 2, true)
-
+	DPrintf("restart %d\n", (leader+1)%servers)
 	cfg.start1((leader+1)%servers, cfg.applier)
 	cfg.connect((leader + 1) % servers)
 
@@ -838,7 +840,7 @@ func TestFigure82C(t *testing.T) {
 			ms := (rand.Int63() % 13)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
-
+		DPrintf("iter:%d crash %d\n", iters, leader)
 		if leader != -1 {
 			cfg.crash1(leader)
 			nup -= 1
@@ -847,13 +849,14 @@ func TestFigure82C(t *testing.T) {
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.rafts[s] == nil {
+				DPrintf("start %d\n", s)
 				cfg.start1(s, cfg.applier)
 				cfg.connect(s)
 				nup += 1
 			}
 		}
 	}
-
+	DPrintf("start all\n")
 	for i := 0; i < servers; i++ {
 		if cfg.rafts[i] == nil {
 			cfg.start1(i, cfg.applier)
@@ -1117,6 +1120,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	leader1 := cfg.checkOneLeader()
 
 	for i := 0; i < iters; i++ {
+		DPrintf("start snapshot test iter:%d\n", i)
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1170,6 +1174,16 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 }
 
 func TestSnapshotBasic2D(t *testing.T) {
+	// traceFile, err := os.Create("trace.out")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer traceFile.Close()
+	// err = trace.Start(traceFile)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer trace.Stop()
 	snapcommon(t, "Test (2D): snapshots basic", false, true, false)
 }
 

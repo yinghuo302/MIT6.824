@@ -174,6 +174,7 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 				err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 			}
 			if err_msg != "" {
+				DPrintf("apply error: %v\n", err_msg)
 				log.Fatalf("apply error: %v", err_msg)
 				cfg.applyErr[i] = err_msg
 				// keep reading after error so that Raft doesn't block
@@ -206,6 +207,7 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 	for j := 0; j < len(xlog); j++ {
 		cfg.logs[i][j] = xlog[j]
 	}
+	DPrintf("[test] change %d lastapplied from %d to %d\n", i, cfg.lastApplied[i], lastIncludedIndex)
 	cfg.lastApplied[i] = lastIncludedIndex
 	return ""
 }
@@ -243,6 +245,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			}
 
 			cfg.mu.Lock()
+			DPrintf("[test] change %d lastapplied from %d to %d\n", i, cfg.lastApplied[i], m.CommandIndex)
 			cfg.lastApplied[i] = m.CommandIndex
 			cfg.mu.Unlock()
 
@@ -261,6 +264,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			// Ignore other types of ApplyMsg.
 		}
 		if err_msg != "" {
+			DPrintf("apply error: %v\n", err_msg)
 			log.Fatalf("apply error: %v", err_msg)
 			cfg.applyErr[i] = err_msg
 			// keep reading after error so that Raft doesn't block
