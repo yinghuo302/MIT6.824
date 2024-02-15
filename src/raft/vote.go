@@ -81,14 +81,14 @@ func (rf *Raft) startElection() {
 	rf.state = candidate
 	rf.currentTerm++
 	rf.votedFor = rf.me
-	DPrintf("me:%d term:%d start Election\n", rf.me, rf.currentTerm)
 	rf.persist()
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
-		LastLogIndex: len(rf.logs) - 1,
+		LastLogIndex: len(rf.logs) - 1 + rf.snapshotIndex,
 		LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
 	}
+	DPrintf("me:%d term:%d lastLogIndex:%d start Election\n", rf.me, rf.currentTerm, args.LastLogIndex)
 	vote := 1
 	for peer := range rf.peers {
 		if peer == rf.me {

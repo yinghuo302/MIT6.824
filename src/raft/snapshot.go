@@ -53,8 +53,10 @@ func (rf *Raft) installSnapshotToPeer(server int) {
 		Data:              rf.persister.ReadSnapshot(),
 	}
 	reply := &InstallSnapshotReply{}
-	rf.peers[server].Call("Raft.InstallSnapshot", &args, reply)
-	if rf.state != leader || args.Term != rf.currentTerm {
+	rf.mu.Unlock()
+	ok := rf.peers[server].Call("Raft.InstallSnapshot", &args, reply)
+	rf.mu.Lock()
+	if !ok || rf.state != leader || args.Term != rf.currentTerm {
 		return
 	}
 	if reply.Term > rf.currentTerm {

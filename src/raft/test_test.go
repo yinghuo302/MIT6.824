@@ -1129,10 +1129,12 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		}
 
 		if disconnect {
+			DPrintf("disconnect %d\n", victim)
 			cfg.disconnect(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
 		if crash {
+			DPrintf("crash %d\n", victim)
 			cfg.crash1(victim)
 			cfg.one(rand.Int(), servers-1, true)
 		}
@@ -1159,11 +1161,13 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		if disconnect {
 			// reconnect a follower, who maybe behind and
 			// needs to rceive a snapshot to catch up.
+			DPrintf("reconnect %d\n", victim)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
+			DPrintf("start %d\n", victim)
 			cfg.start1(victim, cfg.applierSnap)
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
@@ -1174,16 +1178,6 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 }
 
 func TestSnapshotBasic2D(t *testing.T) {
-	// traceFile, err := os.Create("trace.out")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer traceFile.Close()
-	// err = trace.Start(traceFile)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer trace.Stop()
 	snapcommon(t, "Test (2D): snapshots basic", false, true, false)
 }
 

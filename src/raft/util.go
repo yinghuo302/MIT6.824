@@ -9,7 +9,7 @@ import (
 	"6.5840/labrpc"
 )
 
-const Debug = true
+const Debug = false
 
 var file *os.File
 
@@ -33,12 +33,36 @@ func DPrintf(format string, value ...interface{}) {
 	}
 }
 
-const RPCTimeout = 30 * time.Millisecond
+const RPCTimeout = 50 * time.Millisecond
+
+// func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
+// 	ch := make(chan struct{})
+// 	ctx, cancel := context.WithTimeout(context.Background(), RPCTimeout)
+// 	defer cancel()
+// 	go func() {
+// 		for i := 0; i < 3; i++ {
+// 			select {
+// 			case <-ctx.Done():
+// 				return
+// 			default:
+// 				ok := server.Call(svcMeth, args, reply)
+// 				if ok {
+// 					ch <- struct{}{}
+// 					return
+// 				}
+// 			}
+
+// 		}
+// 	}()
+// 	select {
+// 	case <-ch:
+// 		return true
+// 	case <-time.After(RPCTimeout):
+// 		return false
+// 	}
+// }
 
 func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
-	// ctx, cancel := context.WithTimeout(context.Background(), RPCTimeout)
-	// defer cancel()
-
 	ch := make(chan struct{})
 	go func() {
 		for i := 0; i < 10; i++ {
@@ -49,26 +73,14 @@ func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface
 			}
 		}
 	}()
-	// go func() {
-	// 	for i := 0; i < 3; i++ {
-	// 		select {
-	// 		case <-ctx.Done():
-	// 			return
-	// 		default:
-	// 			ok := server.Call(svcMeth, args, reply)
-	// 			if ok {
-	// 				ch <- struct{}{}
-	// 				return
-	// 			}
-	// 		}
-
-	// 	}
-	// }()
 	select {
 	case <-ch:
 		return true
 	case <-time.After(RPCTimeout):
 		return false
 	}
-	// return server.Call(svcMeth, args, reply)
 }
+
+// func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
+// 	return server.Call(svcMeth, args, reply)
+// }

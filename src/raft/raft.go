@@ -141,7 +141,7 @@ func (rf *Raft) getPersistData() []byte {
 	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.commitIndex) != nil || e.Encode(rf.snapshotIndex) != nil || e.Encode(rf.logs) != nil {
 		panic("persist error")
 	}
-	// DPrintf("persist me:%d term:%d,state:%d,voteFor:%d, commitIndex:%d,lastLogIndex:%d lastLogTerm:%d,bytes:%d\n", rf.me, rf.currentTerm, rf.state, rf.votedFor, rf.commitIndex, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term, w.Len())
+	DPrintf("persist me:%d term:%d,state:%d,voteFor:%d, commitIndex:%d,lastLogIndex:%d lastLogTerm:%d,bytes:%d\n", rf.me, rf.currentTerm, rf.state, rf.votedFor, rf.commitIndex, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term, w.Len())
 	return w.Bytes()
 }
 
@@ -279,14 +279,13 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		logs:        make([]Entry, 1),
 		nextIndex:   make([]int, len(peers)),
 		matchIndex:  make([]int, len(peers)),
-		// hrtBtTimer:    time.NewTimer(HeartBeartTimeout),
-		// electionTimer: time.NewTimer(electionDuration()),
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.lastApplied, rf.commitIndex = rf.snapshotIndex, rf.snapshotIndex
 	DPrintf("initialization me:%d term:%d,isLeader:%t,lastLogIndex:%d lastLogTerm:%d\n", rf.me, rf.currentTerm, rf.state == leader, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term)
 	// start ticker goroutine to start elections
 	rf.resetElection()

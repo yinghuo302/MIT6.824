@@ -226,9 +226,11 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	for m := range applyCh {
 		err_msg := ""
 		if m.SnapshotValid {
-			cfg.mu.Lock()
-			err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
-			cfg.mu.Unlock()
+			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
+				cfg.mu.Lock()
+				err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
+				cfg.mu.Unlock()
+			}
 		} else if m.CommandValid {
 			if m.CommandIndex != cfg.lastApplied[i]+1 {
 				err_msg = fmt.Sprintf("server %v apply out of order, expected index %v, got %v", i, cfg.lastApplied[i]+1, m.CommandIndex)
