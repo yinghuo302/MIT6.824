@@ -69,6 +69,7 @@ const (
 	HeartBeartTimeout = 100 * time.Millisecond
 	CmdWaitTime       = 50 * time.Millisecond // Command从Start到replicate的最长等待时间
 	CmdStartTime      = HeartBeartTimeout - CmdWaitTime
+	GapTime           = 30 * time.Millisecond
 )
 
 // A Go object implementing a single Raft peer.
@@ -96,11 +97,13 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 	// state for synchronize
-	applyChan     chan ApplyMsg
-	applyCond     *sync.Cond
-	electionTimer *time.Timer
-	hrtBtTimer    *time.Timer
-	lastHrtBtTime time.Time
+	applyChan chan ApplyMsg
+	applyCond *sync.Cond
+	// electionTimer *time.Timer
+	// hrtBtTimer    *time.Timer
+	lastHrtBtTime    time.Time
+	nextHrtBtTime    time.Time
+	nextElectionTime time.Time
 }
 
 // return currentTerm and whether this server
@@ -213,15 +216,30 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) electionTimeout() bool {
+	return time.Now().After(rf.nextElectionTime)
+}
+
+func (rf *Raft) heartbeatTimeout() bool {
+	return time.Now().After(rf.nextHrtBtTime)
+}
+
 func (rf *Raft) ticker() {
 	go func() {
 		for !rf.killed() {
-			select {
-			case <-rf.hrtBtTimer.C:
-				rf.doHeartBeat(true)
-			case <-rf.electionTimer.C:
-				rf.startElection()
+			rf.mu.Lock()
+			switch rf.state {
+			case follower, candidate:
+				if rf.electionTimeout() {
+					rf.startElection()
+				}
+			case leader:
+				if rf.heartbeatTimeout() {
+					rf.doHeartBeat(true)
+				}
 			}
+			rf.mu.Unlock()
+			time.Sleep(GapTime)
 		}
 	}()
 
@@ -250,19 +268,19 @@ func (rf *Raft) ticker() {
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	labgob.Register(Entry{})
 	rf := &Raft{
-		peers:         peers,
-		persister:     persister,
-		me:            me,
-		applyChan:     applyCh,
-		dead:          0,
-		state:         follower,
-		currentTerm:   1,
-		votedFor:      -1,
-		logs:          make([]Entry, 1),
-		nextIndex:     make([]int, len(peers)),
-		matchIndex:    make([]int, len(peers)),
-		hrtBtTimer:    time.NewTimer(HeartBeartTimeout),
-		electionTimer: time.NewTimer(electionDuration()),
+		peers:       peers,
+		persister:   persister,
+		me:          me,
+		applyChan:   applyCh,
+		dead:        0,
+		state:       follower,
+		currentTerm: 1,
+		votedFor:    -1,
+		logs:        make([]Entry, 1),
+		nextIndex:   make([]int, len(peers)),
+		matchIndex:  make([]int, len(peers)),
+		// hrtBtTimer:    time.NewTimer(HeartBeartTimeout),
+		// electionTimer: time.NewTimer(electionDuration()),
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
 	// Your initialization code here (2A, 2B, 2C).
@@ -271,6 +289,8 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.readPersist(persister.ReadRaftState())
 	DPrintf("initialization me:%d term:%d,isLeader:%t,lastLogIndex:%d lastLogTerm:%d\n", rf.me, rf.currentTerm, rf.state == leader, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term)
 	// start ticker goroutine to start elections
+	rf.resetElection()
+	rf.resetHeartbeart(HeartBeartTimeout)
 	rf.ticker()
 
 	return rf

@@ -48,8 +48,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.Term > rf.currentTerm {
 		rf.state, rf.currentTerm, rf.votedFor = follower, args.Term, -1
-		rf.hrtBtTimer.Stop()
-		rf.electionTimer.Reset(electionDuration())
+		// rf.hrtBtTimer.Stop()
+		// rf.electionTimer.Reset(electionDuration())
+		rf.resetElection()
 	}
 	if !rf.logIsUpdated(args.LastLogTerm, args.LastLogIndex) {
 		reply.VoteGranted = false
@@ -57,8 +58,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	if reply.VoteGranted {
 		rf.state, rf.votedFor = follower, args.CandidateID
-		rf.hrtBtTimer.Stop()
-		rf.electionTimer.Reset(electionDuration())
+		// rf.hrtBtTimer.Stop()
+		// rf.electionTimer.Reset(electionDuration())
+		rf.resetElection()
 	}
 }
 
@@ -69,16 +71,17 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) startElection() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	defer rf.electionTimer.Reset(electionDuration())
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
+	// defer rf.electionTimer.Reset(electionDuration())
+	defer rf.resetElection()
 	if rf.state == leader {
 		return
 	}
-	DPrintf("me:%d start Election\n", rf.me)
 	rf.state = candidate
 	rf.currentTerm++
 	rf.votedFor = rf.me
+	DPrintf("me:%d term:%d start Election\n", rf.me, rf.currentTerm)
 	rf.persist()
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -102,8 +105,9 @@ func (rf *Raft) startElection() {
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.state = follower
-				rf.hrtBtTimer.Stop()
-				rf.electionTimer.Reset(electionDuration())
+				// rf.hrtBtTimer.Stop()
+				// rf.electionTimer.Reset(electionDuration())
+				rf.resetElection()
 			}
 			if reply.Term != rf.currentTerm || rf.state != candidate {
 				return
@@ -120,7 +124,7 @@ func (rf *Raft) startElection() {
 				}
 				DPrintf("me:%d become Leader term:%d lastLogIndex:%d\n", rf.me, rf.currentTerm, lastLogIndex)
 				// rf.hrtBtTimer.Reset(0)
-				rf.electionTimer.Stop()
+				// rf.electionTimer.Stop()
 				rf.resetHeartbeart(0)
 			}
 		}(peer)
@@ -128,13 +132,34 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) resetHeartbeart(duration time.Duration) {
-	DPrintf("me:%d term:%d reset heartbeart %v\n", rf.me, rf.currentTerm, duration)
-	rf.hrtBtTimer.Reset(duration)
+	// if !rf.hrtBtTimer.Stop() {
+	// 	select {
+	// 	case <-rf.hrtBtTimer.C:
+	// 	default:
+	// 	}
+	// }
+	// DPrintf("me:%d term:%d reset heartbeart %v\n", rf.me, rf.currentTerm, duration)
+	// rf.hrtBtTimer.Reset(duration)
+	rf.nextHrtBtTime = time.Now().Add(duration)
+}
+
+func (rf *Raft) resetElection() {
+	// if !rf.electionTimer.Stop() {
+	// 	select {
+	// 	case <-rf.electionTimer.C:
+	// 	default:
+	// 	}
+	// }
+	// duration := electionDuration()
+	// DPrintf("me:%d term:%d reset heartbeart %v\n", rf.me, rf.currentTerm, duration)
+	// rf.electionTimer.Reset(duration)
+	duration := electionDuration()
+	rf.nextElectionTime = time.Now().Add(duration)
 }
 
 func (rf *Raft) doHeartBeat(heartBeart bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()
 	if rf.state != leader {
 		return
 	}
@@ -144,7 +169,7 @@ func (rf *Raft) doHeartBeat(heartBeart bool) {
 func (rf *Raft) doHeartBeatWithLock(heartBeart bool) {
 	// defer rf.hrtBtTimer.Reset(HeartBeartTimeout)
 	defer rf.resetHeartbeart(HeartBeartTimeout)
-	DPrintf("me:%d term: %d do heartBeart [%v]\n", rf.me, rf.currentTerm, heartBeart)
+	DPrintf("me:%d term:%d do heartBeart [%v]\n", rf.me, rf.currentTerm, heartBeart)
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue

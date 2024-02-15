@@ -32,7 +32,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	defer rf.persist()
 	defer func() {
-		DPrintf("me:%d term:%d receive %d entries from %d val:%+v prev:%d,then have %d entries,reply:%+v\n", rf.me, rf.currentTerm, len(args.Entries), args.LeaderId, args.Entries, args.PrevLogIndex, len(rf.logs)+rf.snapshotIndex, reply)
+		DPrintf("me:%d term:%d receive %d entries from [%d,%d] val:%+v prev:%d,then have %d entries,reply:%+v\n", rf.me, rf.currentTerm, len(args.Entries), args.LeaderId, args.Term, args.Entries, args.PrevLogIndex, len(rf.logs)+rf.snapshotIndex, reply)
 	}()
 	if args.Term < rf.currentTerm {
 		reply.Success, reply.Term = false, rf.currentTerm
@@ -42,8 +42,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm, rf.votedFor = args.Term, -1
 	}
 	rf.state = follower
-	rf.hrtBtTimer.Stop()
-	rf.electionTimer.Reset(electionDuration())
+	// rf.hrtBtTimer.Stop()
+	// rf.electionTimer.Reset(electionDuration())
+	rf.resetElection()
 
 	lastLogIndex := len(rf.logs) - 1 + rf.snapshotIndex
 	if args.PrevLogIndex < rf.snapshotIndex {
@@ -102,8 +103,9 @@ func (rf *Raft) sendAppendEntries(peer int) {
 	}
 	if reply.Term > rf.currentTerm {
 		rf.state = follower
-		rf.hrtBtTimer.Stop()
-		rf.electionTimer.Reset(electionDuration())
+		// rf.hrtBtTimer.Stop()
+		// rf.electionTimer.Reset(electionDuration())
+		rf.resetElection()
 		rf.currentTerm = reply.Term
 	} else {
 		if reply.NextLogIndex != 0 {
