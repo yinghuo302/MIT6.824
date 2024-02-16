@@ -26,9 +26,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	if args.Term > rf.currentTerm || rf.state != follower {
 		rf.state, rf.votedFor, rf.currentTerm = follower, -1, reply.Term
-		// rf.hrtBtTimer.Stop()
 		rf.resetElection()
-		// rf.electionTimer.Reset(electionDuration())
 	}
 
 	if rf.snapshotIndex >= args.LastIncludedIndex {
@@ -65,8 +63,6 @@ func (rf *Raft) installSnapshotToPeer(server int) {
 	}
 	if reply.Term > rf.currentTerm {
 		rf.state, rf.votedFor, rf.currentTerm = follower, -1, reply.Term
-		// rf.hrtBtTimer.Stop()
-		// rf.electionTimer.Reset(electionDuration())
 		rf.resetElection()
 		rf.persist()
 		return
