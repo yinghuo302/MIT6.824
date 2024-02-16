@@ -62,29 +62,3 @@ func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface
 		return false
 	}
 }
-
-// func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
-// 	ch := make(chan struct{})
-// 	go func() {
-// 		for i := 0; i < 10; i++ {
-// 			ok := server.Call(svcMeth, args, reply)
-// 			if ok {
-// 				select {
-// 				case ch <- struct{}{}:
-// 				default:
-// 				}
-// 				return
-// 			}
-// 		}
-// 	}()
-// 	select {
-// 	case <-ch:
-// 		return true
-// 	case <-time.After(RPCTimeout):
-// 		return false
-// 	}
-// }
-
-// func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
-// 	return server.Call(svcMeth, args, reply)
-// }
