@@ -37,9 +37,12 @@ func nrand() int64 {
 }
 
 type Clerk struct {
-	sm       *shardctrler.Clerk
-	config   shardctrler.Config
-	make_end func(string) *labrpc.ClientEnd
+	sm        *shardctrler.Clerk
+	config    shardctrler.Config
+	make_end  func(string) *labrpc.ClientEnd
+	clkId     int64
+	requestId int64
+
 	// You will have to modify this struct.
 }
 
@@ -55,7 +58,11 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
-	return ck
+	return &Clerk{
+		sm:       shardctrler.MakeClerk(ctrlers),
+		make_end: make_end,
+		clkId:    nrand(),
+	}
 }
 
 // fetch the current value for a key.
@@ -72,23 +79,26 @@ func (ck *Clerk) Get(key string) string {
 
 // shared by Put and Append.
 // You will have to modify this function.
-func (ck *Clerk) PutAppend(key string, value string, op string) {
+func (ck *Clerk) PutAppend(key string, value string, op OpType) {
 	args := &CommonArgs{
 		Key:   key,
 		Value: value,
-		Op:    PUT_OP,
+		Op:    op,
 	}
 	ck.SendRequest(args)
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.PutAppend(key, value, PUT_OP)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.PutAppend(key, value, APPEND_OP)
 }
 
 func (ck *Clerk) SendRequest(args *CommonArgs) string {
+	args.ClientId = ck.clkId
+	args.RequestId = ck.requestId
+	ck.requestId++
 	reply := &CommonReply{}
 	for {
 		shard := key2shard(args.Key)
@@ -96,8 +106,9 @@ func (ck *Clerk) SendRequest(args *CommonArgs) string {
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
 			for si := 0; si < len(servers); si++ {
+				DPrintf("shardkv client send request to gid:%d server:%s", gid, servers[si])
 				srv := ck.make_end(servers[si])
-				ok := srv.Call("ShardKV.Get", &args, reply)
+				ok := srv.Call("ShardKV.HandleRequest", args, reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
 				}
@@ -110,6 +121,7 @@ func (ck *Clerk) SendRequest(args *CommonArgs) string {
 		time.Sleep(100 * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		DPrintf("client update config num:%d", ck.config.Num)
 	}
 	return ""
 }

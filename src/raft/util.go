@@ -18,7 +18,7 @@ func init() {
 	if !Debug {
 		return
 	}
-	f, err := os.Create("./log-" + strconv.Itoa(int(time.Now().Unix())) + ".txt")
+	f, err := os.Create("./raft-" + strconv.Itoa(int(time.Now().Unix())) + ".log")
 	if err != nil {
 		panic("log create file fail!")
 	}
@@ -29,8 +29,7 @@ func init() {
 func DPrintf(format string, value ...interface{}) {
 	if Debug {
 		currMs := (time.Now().UnixMilli()) & 0xfffff
-		info := fmt.Sprintf("[%vms] ", currMs) + fmt.Sprintf(format, value...)
-		file.WriteString(info)
+		fmt.Fprintf(file, "[%vms] %s", currMs, fmt.Sprintf(format, value...))
 	}
 }
 
@@ -48,7 +47,10 @@ func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface
 			default:
 				ok := server.Call(svcMeth, args, reply)
 				if ok {
-					ch <- struct{}{}
+					select {
+					case ch <- struct{}{}:
+					default:
+					}
 					return
 				}
 			}

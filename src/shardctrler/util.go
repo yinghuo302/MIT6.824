@@ -8,7 +8,7 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug = false
 
 var file *os.File
 
@@ -16,7 +16,7 @@ func init() {
 	if !Debug {
 		return
 	}
-	f, err := os.Create("./log-" + strconv.Itoa(int(time.Now().Unix())) + ".txt")
+	f, err := os.Create("./shardctrler-" + strconv.Itoa(int(time.Now().Unix())) + ".log")
 	if err != nil {
 		panic("log create file fail!")
 	}

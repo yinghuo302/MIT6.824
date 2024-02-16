@@ -13,14 +13,15 @@ func (kv *ShardKV) pullShards() {
 	for gid, shardIDs := range shardMp {
 		wg.Add(1)
 		go func(servers []string, configNum int, shardIDs []int) {
+			DPrintf("me:%d gid:%d pull shards %v", kv.me, kv.gid, shardIDs)
 			defer wg.Done()
 			args, reply := &PullShardArgs{configNum, shardIDs}, &PullShardReply{}
 			for _, server := range servers {
 				if sendRPC(kv.make_end(server), "ShardKV.PullShards", args, reply) && reply.Err == OK {
-					kv.rf.Start(Command{InsertShards, *reply})
 					break
 				}
 			}
+			kv.rf.Start(Command{PullShards, *reply})
 		}(kv.oldConfig.Groups[gid], kv.config.Num, shardIDs)
 	}
 	kv.mu.RUnlock()
@@ -58,6 +59,9 @@ func (kv *ShardKV) PullShards(args *PullShardArgs, reply *PullShardReply) {
 
 func (kv *ShardKV) applyPullShards(msg *raft.ApplyMsg) {
 	shardsInfo := msg.Command.(Command).Cmd.(PullShardReply)
+	if shardsInfo.ConfigNum != kv.config.Num {
+		return
+	}
 	if shardsInfo.ConfigNum == kv.config.Num {
 		for shardId, newShard := range shardsInfo.Shards {
 			oldShard := kv.shards[shardId]
@@ -76,6 +80,7 @@ func (kv *ShardKV) deleteShards() {
 	wg := sync.WaitGroup{}
 	for gid, shards := range groupToShards {
 		wg.Add(1)
+		DPrintf("me:%d gid:%d request to delete shards %v to %d", kv.me, kv.gid, shards, gid)
 		servers := kv.oldConfig.Groups[gid]
 		go func(servers []string, shards []int, confNum int) {
 			defer wg.Done()
@@ -104,12 +109,17 @@ func (kv *ShardKV) DeleteShards(args *DelShardsArgs, reply *CommonReply) {
 
 func (kv *ShardKV) applyDeleteShards(msg *raft.ApplyMsg) {
 	args, reply := msg.Command.(Command).Cmd.(DelShardsArgs), &CommonReply{Err: OK}
-	for _, sid := range args.ShardIDs {
-		shard := kv.shards[sid]
-		if shard.Status == Waiting { // 当前 raft 组在当前 config 下负责管理此分片
-			shard.Status = Serving
-		} else if shard.Status == Expire { // 当前 raft 组在当前 config 下不负责管理此分片，在oldConfig中负责
-			delete(kv.shards, sid)
+	if args.ConfNum == kv.config.Num {
+		for _, sid := range args.ShardIDs {
+			shard := kv.shards[sid]
+			if shard == nil {
+				continue
+			}
+			if shard.Status == Waiting { // 当前 raft 组在当前 config 下负责管理此分片
+				shard.Status = Serving
+			} else if shard.Status == Expire { // 当前 raft 组在当前 config 下不负责管理此分片，在oldConfig中负责
+				delete(kv.shards, sid)
+			}
 		}
 	}
 	currentTerm, isLeader := kv.rf.GetState()

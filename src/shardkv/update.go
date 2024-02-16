@@ -28,10 +28,16 @@ func (kv *ShardKV) applyConfiguration(msg *raft.ApplyMsg) {
 	nextConfig := msg.Command.(Command).Cmd.(shardctrler.Config)
 	if nextConfig.Num == kv.config.Num+1 {
 		for sid, gid := range nextConfig.Shards {
-			if gid == kv.gid && kv.config.Shards[sid] != gid {
-				kv.shards[sid] = NewShard(Pulling)
-			} else if gid != kv.gid && kv.config.Shards[sid] == gid {
+			if gid == kv.gid && kv.config.Shards[sid] != kv.gid {
+				if kv.config.Shards[sid] != 0 {
+					kv.shards[sid] = NewShard(Pulling)
+				} else {
+					kv.shards[sid] = NewShard(Serving)
+				}
+				DPrintf("me:%d gid:%d shard:%d change from %d to %d", kv.me, kv.gid, sid, kv.config.Shards[sid], gid)
+			} else if gid != kv.gid && kv.config.Shards[sid] == kv.gid {
 				kv.shards[sid].Status = Expire
+				DPrintf("me:%d gid:%d shard:%d change from %d to %d", kv.me, kv.gid, sid, kv.config.Shards[sid], gid)
 			}
 		}
 		kv.oldConfig = kv.config

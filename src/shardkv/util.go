@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"6.5840/labrpc"
@@ -12,27 +13,32 @@ import (
 // Debugging
 const Debug = true
 
-var file *os.File = nil
+var file *os.File
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		if file == nil {
-			var fileErr error
-			file, fileErr = os.OpenFile("tem.log", os.O_WRONLY|os.O_CREATE, 0666)
-			if fileErr != nil {
-				panic("open file error")
-			}
-		}
-		fmt.Fprintf(file, format, a...)
+func init() {
+	if !Debug {
+		return
 	}
-	return
+	f, err := os.Create("./shardkv-" + strconv.Itoa(int(time.Now().Unix())) + ".log")
+	if err != nil {
+		panic("log create file fail!")
+	}
+	file = f
+}
+
+// debug下打印日志
+func DPrintf(format string, value ...interface{}) {
+	if Debug {
+		currMs := (time.Now().UnixMilli()) & 0xfffff
+		fmt.Fprintf(file, "[%vms] %s\n", currMs, fmt.Sprintf(format, value...))
+	}
 }
 
 func sendRPC(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
 	return server.Call(svcMeth, args, reply)
 }
 
-const RPCTimeout = 100 * time.Microsecond
+const RPCTimeout = 50 * time.Microsecond
 
 func sendRPCWithTimeout(server *labrpc.ClientEnd, svcMeth string, args interface{}, reply interface{}) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), RPCTimeout)

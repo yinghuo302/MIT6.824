@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ExecTimeOut         = time.Millisecond * 500
+	ExecTimeOut         = time.Millisecond * 800
 	ConfigTimeOut       = time.Millisecond * 100
 	PullShardsTimeOut   = time.Millisecond * 100
 	DeleteShardsTimeOut = time.Millisecond * 100
@@ -91,6 +91,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(DelShardsArgs{})
 	labgob.Register(PullShardArgs{})
 	labgob.Register(PullShardReply{})
+	labgob.Register(Command{})
 	applyCh := make(chan raft.ApplyMsg)
 	kv := &ShardKV{
 		me:           me,
@@ -102,28 +103,31 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		ctrlers:      ctrlers,
 		maxraftstate: maxraftstate,
 		dead:         0,
-		sc:           shardctrler.MakeClerk(servers),
+		sc:           shardctrler.MakeClerk(ctrlers),
 		shards:       make(map[int]*Shard),
 		notifier:     make(map[int]chan *CommonReply),
 	}
-
+	kv.restoreSnapshot(persister.ReadSnapshot())
 	// Your initialization code here.
 
 	// Use something like this to talk to the shardctrler:
 	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	DPrintf("me:%d gid:%d start", kv.me, kv.gid)
 	go kv.applyCommand()
 	kv.Monitor(kv.fetchConfig, ConfigTimeOut)
 	kv.Monitor(kv.pullShards, PullShardsTimeOut)
 	kv.Monitor(kv.deleteShards, DeleteShardsTimeOut)
-	// kv.Monitor(kv.)
+	kv.Monitor(kv.emptyEntryAction, EmptyEntryTimeout)
 	return kv
 }
 
 func (kv *ShardKV) Monitor(action func(), timeout time.Duration) {
-	for !kv.killed() {
-		if _, isLeader := kv.rf.GetState(); isLeader {
-			action()
+	go func() {
+		for !kv.killed() {
+			if _, isLeader := kv.rf.GetState(); isLeader {
+				action()
+			}
+			time.Sleep(timeout)
 		}
-		time.Sleep(timeout)
-	}
+	}()
 }

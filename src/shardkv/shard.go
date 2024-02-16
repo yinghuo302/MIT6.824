@@ -1,5 +1,7 @@
 package shardkv
 
+import "fmt"
+
 type ShardStatus int
 
 const (
@@ -48,10 +50,14 @@ func (shard *Shard) PutAppend(method OpType, key, value string) Err {
 	} else if method == APPEND_OP {
 		shard.KV[key] += value
 	}
+	DPrintf("write into kvmap op:%v key:%s value:%s", method, key, shard.KV[key])
 	return OK
 }
 
 func (shard *Shard) Copy() *Shard {
+	if shard == nil {
+		return nil
+	}
 	newShard := &Shard{make(map[string]string), make(map[int64]RequestHistory), shard.Status}
 	for k, v := range shard.KV {
 		newShard.KV[k] = v
@@ -63,6 +69,9 @@ func (shard *Shard) Copy() *Shard {
 }
 
 func (shard *Shard) Exec(clkId, cmdId int64, args *CommonArgs) *CommonReply {
+	if !shard.CanServe() {
+		return &CommonReply{Err: ErrWrongGroup}
+	}
 	if args.Op == GET_OP {
 		value, err := shard.Get(args.Key)
 		return &CommonReply{Value: value, Err: err}
@@ -81,4 +90,23 @@ func (shard *Shard) GetLastReq(clkId, cmdId int64) *CommonReply {
 		return nil
 	}
 	return &last.Reply
+}
+
+func (shard *Shard) CheckAndGetLastReq(clkId, cmdId int64) *CommonReply {
+	if !shard.CanServe() {
+		return &CommonReply{Err: ErrWrongGroup}
+	}
+	last, ok := shard.LastReq[clkId]
+	if !ok || last.ReqId != cmdId {
+		return nil
+	}
+	return &last.Reply
+}
+
+func (shard *Shard) CanServe() bool {
+	return shard != nil && (shard.Status == Serving || shard.Status == Waiting)
+}
+
+func (shard *Shard) String() string {
+	return fmt.Sprintf("{status:%v kv:%v lastReq:%v}", shard.Status, shard.KV, shard.LastReq)
 }

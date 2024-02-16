@@ -93,7 +93,7 @@ type CommandType int
 const (
 	Operation CommandType = iota
 	Configuration
-	InsertShards
+	PullShards
 	DeleteShards
 	EmptyEntry
 )

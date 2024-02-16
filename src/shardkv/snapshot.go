@@ -14,12 +14,11 @@ func (kv *ShardKV) restoreSnapshot(data []byte) {
 	}
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
-	shards := make(map[int]*Shard)
 
-	if d.Decode(&shards) != nil {
+	if d.Decode(&kv.shards) != nil || d.Decode(&kv.config) != nil || d.Decode(&kv.oldConfig) != nil {
 		log.Fatal("kv read persist err!")
 	}
-	kv.shards = shards
+	return
 }
 
 func (kv *ShardKV) saveSnapshot(index int) {
@@ -28,8 +27,8 @@ func (kv *ShardKV) saveSnapshot(index int) {
 	}
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	if err := e.Encode(kv.shards); err != nil {
-		panic(err)
+	if e.Encode(kv.shards) != nil || e.Encode(kv.config) != nil || e.Encode(kv.oldConfig) != nil {
+		panic("save snapshot error")
 	}
 	data := w.Bytes()
 	kv.rf.Snapshot(index, data)
