@@ -27,7 +27,7 @@ func init() {
 func DPrintf(format string, value ...interface{}) {
 	if Debug {
 		currMs := (time.Now().UnixMilli()) & 0xfffff
-		info := fmt.Sprintf("[%vms %vs]: ", currMs, currMs/1000) + fmt.Sprintf(format, value...)
+		info := fmt.Sprintf("[%vms] ", currMs) + fmt.Sprintf(format, value...)
 		file.WriteString(info)
 	}
 }
