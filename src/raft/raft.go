@@ -97,10 +97,9 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 	// state for synchronize
-	applyChan chan ApplyMsg
-	applyCond *sync.Cond
-	// electionTimer *time.Timer
-	// hrtBtTimer    *time.Timer
+	applyChan        chan ApplyMsg
+	applyCond        *sync.Cond
+	snapshotMu       sync.Mutex
 	lastHrtBtTime    time.Time
 	nextHrtBtTime    time.Time
 	nextElectionTime time.Time
@@ -141,7 +140,7 @@ func (rf *Raft) getPersistData() []byte {
 	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.commitIndex) != nil || e.Encode(rf.snapshotIndex) != nil || e.Encode(rf.logs) != nil {
 		panic("persist error")
 	}
-	DPrintf("persist me:%d term:%d,state:%d,voteFor:%d, commitIndex:%d,lastLogIndex:%d lastLogTerm:%d,bytes:%d\n", rf.me, rf.currentTerm, rf.state, rf.votedFor, rf.commitIndex, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term, w.Len())
+	DPrintf("persist me:%d term:%d state:%d voteFor:%d commitIndex:%d lastLogIndex:%d lastLogTerm:%d bytes:%d\n", rf.me, rf.currentTerm, rf.state, rf.votedFor, rf.commitIndex, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term, w.Len())
 	return w.Bytes()
 }
 
@@ -235,24 +234,13 @@ func (rf *Raft) ticker() {
 				}
 			case leader:
 				if rf.heartbeatTimeout() {
-					rf.doHeartBeat(true)
+					rf.doHeartBeatWithLock(true)
 				}
 			}
 			rf.mu.Unlock()
 			time.Sleep(GapTime)
 		}
 	}()
-
-	// go func() {
-	// 	rf.replicateCond.L.Lock()
-	// 	defer rf.replicateCond.L.Unlock()
-	// 	for !rf.killed() {
-	// 		for rf.state != leader {
-	// 			rf.replicateCond.Wait()
-	// 		}
-	// 		rf.doHeartBeat("replicate")
-	// 	}
-	// }()
 	go rf.applyCommand()
 }
 
@@ -289,7 +277,6 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	DPrintf("initialization me:%d term:%d,isLeader:%t,lastLogIndex:%d lastLogTerm:%d\n", rf.me, rf.currentTerm, rf.state == leader, len(rf.logs)-1+rf.snapshotIndex, rf.logs[len(rf.logs)-1].Term)
 	// start ticker goroutine to start elections
 	rf.resetElection()
-	rf.resetHeartbeart(HeartBeartTimeout)
 	rf.ticker()
 
 	return rf

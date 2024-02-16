@@ -35,12 +35,16 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
-	rf.applyChan <- ApplyMsg{
-		SnapshotValid: true,
-		Snapshot:      args.Data,
-		SnapshotTerm:  args.LastIncludedTerm,
-		SnapshotIndex: args.LastIncludedIndex,
-	}
+	go func() {
+		rf.snapshotMu.Lock()
+		rf.applyChan <- ApplyMsg{
+			SnapshotValid: true,
+			Snapshot:      args.Data,
+			SnapshotTerm:  args.LastIncludedTerm,
+			SnapshotIndex: args.LastIncludedIndex,
+		}
+		rf.snapshotMu.Unlock()
+	}()
 
 }
 
@@ -49,7 +53,7 @@ func (rf *Raft) installSnapshotToPeer(server int) {
 		Term:              rf.currentTerm,
 		LeaderId:          rf.me,
 		LastIncludedIndex: rf.snapshotIndex,
-		LastIncludedTerm:  rf.currentTerm,
+		LastIncludedTerm:  rf.logs[0].Term,
 		Data:              rf.persister.ReadSnapshot(),
 	}
 	reply := &InstallSnapshotReply{}
@@ -101,6 +105,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("me:%d CondInstallSnapshot term:%d,index:%d\n", rf.me, lastIncludedTerm, lastIncludedIndex)
 	if lastIncludedIndex <= rf.commitIndex {
 		return false
 	}

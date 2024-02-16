@@ -18,15 +18,6 @@ type AppendEntriesReply struct {
 	NextLogIndex int
 }
 
-func (rf *Raft) isOutOfArgsAppendEntries(args *AppendEntriesArgs) bool {
-	argsLastLogIndex := args.PrevLogIndex + len(args.Entries)
-	lastLogTerm, lastLogIndex := rf.logs[len(rf.logs)-1].Term, len(rf.logs)-1+rf.snapshotIndex
-	if lastLogTerm == args.Term && argsLastLogIndex < lastLogIndex {
-		return true
-	}
-	return false
-}
-
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -42,38 +33,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm, rf.votedFor = args.Term, -1
 	}
 	rf.state = follower
-	// rf.hrtBtTimer.Stop()
-	// rf.electionTimer.Reset(electionDuration())
 	rf.resetElection()
-
 	lastLogIndex := len(rf.logs) - 1 + rf.snapshotIndex
 	if args.PrevLogIndex < rf.snapshotIndex {
+		DPrintf("me:%d PrevLogIndex:%d snapshotIndex:%d\n", rf.me, args.PrevLogIndex, rf.snapshotIndex)
 		reply.Success, reply.NextLogIndex = false, rf.snapshotIndex+1
 	} else if args.PrevLogIndex > lastLogIndex {
+		DPrintf("me:%d PrevLogIndex:%d lastLogIndex:%d\n", rf.me, args.PrevLogIndex, lastLogIndex)
 		reply.Success, reply.NextLogIndex = false, lastLogIndex+1
 	} else if args.PrevLogTerm == rf.logs[args.PrevLogIndex-rf.snapshotIndex].Term {
 		index := args.PrevLogIndex - rf.snapshotIndex + 1
 		for i, entry := range args.Entries {
 			if index >= len(rf.logs) || rf.logs[index].Term != entry.Term {
-				rf.logs = append(rf.logs[:index], args.Entries[i:]...)
+				rf.logs = append(append([]Entry{}, rf.logs[:index]...), args.Entries[i:]...)
 				break
 			}
 			index++
 		}
 		reply.Success, reply.NextLogIndex = true, args.PrevLogIndex+1+len(args.Entries)
-		// if rf.isOutOfArgsAppendEntries(args) {
-		// 	reply.Success = false
-		// 	reply.NextLogIndex = 0 //=0代表着插入会导致乱序
-		// } else {
-		// rf.logs = append(rf.logs[:args.PrevLogIndex-rf.snapshotIndex+1], args.Entries...)
-		// reply.Success, reply.NextLogIndex = true, len(rf.logs)+rf.snapshotIndex
-		// }
 	} else {
 		index, term := args.PrevLogIndex, rf.logs[args.PrevLogIndex-rf.snapshotIndex].Term
 		for index > rf.snapshotIndex && rf.logs[index-rf.snapshotIndex].Term == term {
 			index--
 		}
 		reply.Success, reply.NextLogIndex = false, index+1
+		DPrintf("me:%d argsIndex:%d argsTerm:%d meTerm:%d back to %d\n", rf.me, args.PrevLogIndex, args.Term, term, reply.NextLogIndex)
 	}
 
 	if reply.Success {
@@ -121,7 +105,7 @@ func (rf *Raft) sendAppendEntries(peer int) {
 			}
 		}
 		if rf.commitIndex < idx-1 && rf.logs[idx-1-rf.snapshotIndex].Term == rf.currentTerm {
-			DPrintf("me:%d term:%d commitIndex:%d\n", rf.currentTerm, rf.me, rf.commitIndex)
+			DPrintf("me:%d term:%d commitIndex:%d\n", rf.me, rf.currentTerm, rf.commitIndex)
 			rf.commitIndex = idx - 1
 			rf.applyCond.Signal()
 		}
@@ -144,32 +128,6 @@ func (rf *Raft) replicate(peer int) {
 	// DPrintf("me:%d replicate release lock\n", rf.me)
 }
 
-// func (rf *Raft) applyCommand() {
-// 	for !rf.killed() {
-// 		rf.mu.Lock()
-// 		for rf.lastApplied >= rf.commitIndex {
-// 			rf.applyCond.Wait()
-// 		}
-// 		msgs, commitIdx := make([]ApplyMsg, 0, rf.commitIndex-rf.lastApplied), rf.commitIndex
-// 		for idx := rf.lastApplied + 1; idx <= rf.commitIndex; idx++ {
-// 			msgs = append(msgs, ApplyMsg{
-// 				Command:      rf.logs[idx-rf.snapshotIndex].Command,
-// 				CommandIndex: idx,
-// 				CommandValid: true,
-// 			})
-// 		}
-
-// 		rf.mu.Unlock()
-// 		for _, msg := range msgs {
-// 			rf.applyChan <- msg
-// 			DPrintf("me:%d apply Command index:%d %+v\n", rf.me, msg.CommandIndex, msg.Command)
-// 		}
-// 		rf.mu.Lock()
-// 		rf.lastApplied = commitIdx
-// 		rf.mu.Unlock()
-// 	}
-// }
-
 func (rf *Raft) applyCommand() {
 	for !rf.killed() {
 		rf.mu.Lock()
@@ -178,7 +136,10 @@ func (rf *Raft) applyCommand() {
 		}
 		lastApplied, commitIdx := rf.lastApplied, rf.commitIndex
 		entries := append([]Entry{}, rf.logs[lastApplied+1-rf.snapshotIndex:commitIdx+1-rf.snapshotIndex]...)
+		DPrintf("me:%d copy log from %d to %d try to apply\n", rf.me, lastApplied, commitIdx)
 		rf.mu.Unlock()
+
+		rf.snapshotMu.Lock() // apply时不允许snapshot
 		for idx, entry := range entries {
 			DPrintf("me:%d apply Command index:%d %+v\n", rf.me, idx+1+lastApplied, entry.Command)
 			rf.applyChan <- ApplyMsg{
@@ -188,8 +149,12 @@ func (rf *Raft) applyCommand() {
 				CommandTerm:  entry.Term,
 			}
 		}
+		rf.snapshotMu.Unlock()
+
 		rf.mu.Lock()
-		rf.lastApplied = commitIdx
+		if commitIdx > rf.lastApplied {
+			rf.lastApplied = commitIdx
+		}
 		rf.mu.Unlock()
 	}
 }

@@ -105,8 +105,6 @@ func (rf *Raft) startElection() {
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
 				rf.state = follower
-				// rf.hrtBtTimer.Stop()
-				// rf.electionTimer.Reset(electionDuration())
 				rf.resetElection()
 			}
 			if reply.Term != rf.currentTerm || rf.state != candidate {
@@ -123,52 +121,23 @@ func (rf *Raft) startElection() {
 					rf.matchIndex[i] = 0
 				}
 				DPrintf("me:%d become Leader term:%d lastLogIndex:%d\n", rf.me, rf.currentTerm, lastLogIndex)
-				// rf.hrtBtTimer.Reset(0)
-				// rf.electionTimer.Stop()
-				rf.resetHeartbeart(0)
+				rf.doHeartBeatWithLock(true)
 			}
 		}(peer)
 	}
 }
 
-func (rf *Raft) resetHeartbeart(duration time.Duration) {
-	// if !rf.hrtBtTimer.Stop() {
-	// 	select {
-	// 	case <-rf.hrtBtTimer.C:
-	// 	default:
-	// 	}
-	// }
-	// DPrintf("me:%d term:%d reset heartbeart %v\n", rf.me, rf.currentTerm, duration)
-	// rf.hrtBtTimer.Reset(duration)
-	rf.nextHrtBtTime = time.Now().Add(duration)
+func (rf *Raft) resetHeartbeart() {
+	rf.nextHrtBtTime = time.Now().Add(HeartBeartTimeout)
 }
 
 func (rf *Raft) resetElection() {
-	// if !rf.electionTimer.Stop() {
-	// 	select {
-	// 	case <-rf.electionTimer.C:
-	// 	default:
-	// 	}
-	// }
-	// duration := electionDuration()
-	// DPrintf("me:%d term:%d reset heartbeart %v\n", rf.me, rf.currentTerm, duration)
-	// rf.electionTimer.Reset(duration)
 	duration := electionDuration()
 	rf.nextElectionTime = time.Now().Add(duration)
 }
 
-func (rf *Raft) doHeartBeat(heartBeart bool) {
-	// rf.mu.Lock()
-	// defer rf.mu.Unlock()
-	if rf.state != leader {
-		return
-	}
-	rf.doHeartBeatWithLock(heartBeart)
-}
-
 func (rf *Raft) doHeartBeatWithLock(heartBeart bool) {
-	// defer rf.hrtBtTimer.Reset(HeartBeartTimeout)
-	defer rf.resetHeartbeart(HeartBeartTimeout)
+	defer rf.resetHeartbeart()
 	DPrintf("me:%d term:%d do heartBeart [%v]\n", rf.me, rf.currentTerm, heartBeart)
 	for peer := range rf.peers {
 		if peer == rf.me {
@@ -177,7 +146,6 @@ func (rf *Raft) doHeartBeatWithLock(heartBeart bool) {
 		go func(peer int) {
 			rf.replicate(peer)
 		}(peer)
-		// rf.replicateCh[peer] <- struct{}{}
 	}
 	rf.lastHrtBtTime = time.Now()
 }
