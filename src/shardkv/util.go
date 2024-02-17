@@ -3,6 +3,9 @@ package shardkv
 import (
 	"context"
 	"fmt"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"time"
@@ -11,7 +14,7 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug = false
 
 var file *os.File
 
@@ -19,6 +22,9 @@ func init() {
 	if !Debug {
 		return
 	}
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	f, err := os.Create("./shardkv-" + strconv.Itoa(int(time.Now().Unix())) + ".log")
 	if err != nil {
 		panic("log create file fail!")

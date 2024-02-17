@@ -74,9 +74,11 @@ func (sc *ShardCtrler) HandleRequest(args *CommandArgs, reply *CommandReply) {
 	case <-time.After(ExecTimeOut):
 		reply.Err, reply.Config = ErrTimeout, Config{}
 	}
-	sc.mu.Lock()
-	delete(sc.notifier, index)
-	sc.mu.Unlock()
+	go func() {
+		sc.mu.Lock()
+		delete(sc.notifier, index)
+		sc.mu.Unlock()
+	}()
 }
 
 func (sc *ShardCtrler) execCmd(args *CommandArgs) *CommandReply {
